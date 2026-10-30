@@ -30,28 +30,48 @@ function isDescendant(node, ancestor) {
 function canBeParent(node) { return node === root || node.type === 'Frame'; }
 function hasText(node) { return node.type === 'TextLabel' || node.type === 'TextButton'; }
 
-function getAbsolutePosition(node) {
-  if (node === root) return { x: 0, y: 0 };
-  const parent = findParent(node);
-  if (!parent) return { x: node.x, y: node.y };
-  const pAbs = getAbsolutePosition(parent);
-  const own = parent.layout
-    ? (computeChildPositions(parent)[node.id] || { x: node.x, y: node.y })
-    : { x: node.x, y: node.y };
-  return { x: pAbs.x + own.x, y: pAbs.y + own.y };
+// ============ PIXEL HELPERS (Offset ↔ Scale) ============
+function getPixelSize(node, parentW, parentH) {
+  if (node.sizeMode === 'Scale') return { w: node.w * parentW, h: node.h * parentH };
+  return { w: node.w, h: node.h };
+}
+function getPixelPosition(node, parentW, parentH) {
+  if (node.positionMode === 'Scale') return { x: node.x * parentW, y: node.y * parentH };
+  return { x: node.x, y: node.y };
+}
+function getParentPixelDims(node) {
+  const nodeEl = canvas.querySelector(`.node[data-id="${node.id}"]`);
+  const parentEl = nodeEl?.parentElement;
+  if (!parentEl || parentEl === canvas) {
+    return { w: canvas.clientWidth || 360, h: canvas.clientHeight || 480 };
+  }
+  return { w: parentEl.offsetWidth || 1, h: parentEl.offsetHeight || 1 };
+}
+
+// ============ PATHS ============
+function getByPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+function setByPath(obj, path, val) {
+  const keys = path.split('.');
+  let t = obj;
+  for (let i = 0; i < keys.length - 1; i++) { if (t[keys[i]] == null) t[keys[i]] = {}; t = t[keys[i]]; }
+  t[keys[keys.length - 1]] = val;
 }
 
 // ============ DEFAULTS ============
 const DEFAULTS = {
   Frame: {
-    w: 200, h: 120, bg: '#3a3a4a', bgTransparency: 0,
+    w: 200, h: 120, positionMode: 'Offset', sizeMode: 'Offset',
+    bg: '#3a3a4a', bgTransparency: 0,
     textColor: '#ffffff', text: '', fontSize: 16, cornerRadius: 8,
     visible: true, active: false, draggable: false,
     zIndex: 1, borderSizePixel: 0, clipsDescendants: false,
     layout: null, padding: { top: 0, right: 0, bottom: 0, left: 0 },
   },
   TextLabel: {
-    w: 160, h: 40, bg: '#2e2e42', bgTransparency: 0,
+    w: 160, h: 40, positionMode: 'Offset', sizeMode: 'Offset',
+    bg: '#2e2e42', bgTransparency: 0,
     textColor: '#ffffff', text: 'Texto', fontSize: 16, cornerRadius: 6,
     visible: true, draggable: false,
     zIndex: 1, borderSizePixel: 0,
@@ -59,7 +79,8 @@ const DEFAULTS = {
     textXAlignment: 'Center', textYAlignment: 'Center',
   },
   TextButton: {
-    w: 160, h: 44, bg: '#5a5aff', bgTransparency: 0,
+    w: 160, h: 44, positionMode: 'Offset', sizeMode: 'Offset',
+    bg: '#5a5aff', bgTransparency: 0,
     textColor: '#ffffff', text: 'Botón', fontSize: 16, cornerRadius: 8,
     visible: true, active: true, draggable: false, autoButtonColor: true,
     zIndex: 1, borderSizePixel: 0,
@@ -67,7 +88,8 @@ const DEFAULTS = {
     textXAlignment: 'Center', textYAlignment: 'Center',
   },
   ImageLabel: {
-    w: 120, h: 120, bg: '#444455', bgTransparency: 0,
+    w: 120, h: 120, positionMode: 'Offset', sizeMode: 'Offset',
+    bg: '#444455', bgTransparency: 0,
     textColor: '#ffffff', text: '', fontSize: 16, cornerRadius: 8,
     visible: true, draggable: false,
     zIndex: 1, borderSizePixel: 0,
@@ -75,44 +97,40 @@ const DEFAULTS = {
   },
 };
 
-// ============ COMPUTE LAYOUT ============
-// Devuelve { [childId]: {x, y} } relativo al content box del padre
-function computeChildPositions(parent) {
+// ============ COMPUTE LAYOUT (en píxeles) ============
+function computeChildPositions(parent, parentPx) {
   const positions = {};
-  if (!parent.layout) {
-    for (const c of parent.children) positions[c.id] = { x: c.x, y: c.y };
-    return positions;
-  }
+  if (!parent.layout) return positions;
   const pad = parent.padding || { top: 0, right: 0, bottom: 0, left: 0 };
-  const innerW = parent.w - pad.left - pad.right;
-  const innerH = parent.h - pad.top - pad.bottom;
+  const innerW = parentPx.w - pad.left - pad.right;
+  const innerH = parentPx.h - pad.top - pad.bottom;
 
   if (parent.layout.type === 'UIListLayout') {
     const L = parent.layout;
     let cursor = 0;
     for (const c of parent.children) {
+      const cpx = getPixelSize(c, parentPx.w, parentPx.h);
+      let x, y;
       if (L.fillDirection === 'Vertical') {
-        let x;
         if (L.horizontalAlignment === 'Left') x = pad.left;
-        else if (L.horizontalAlignment === 'Right') x = pad.left + innerW - c.w;
-        else x = pad.left + (innerW - c.w) / 2;
-        positions[c.id] = { x: Math.round(x), y: Math.round(pad.top + cursor) };
-        cursor += c.h + L.padding;
+        else if (L.horizontalAlignment === 'Right') x = pad.left + innerW - cpx.w;
+        else x = pad.left + (innerW - cpx.w) / 2;
+        y = pad.top + cursor;
+        cursor += cpx.h + L.padding;
       } else {
-        let y;
+        x = pad.left + cursor;
         if (L.verticalAlignment === 'Top') y = pad.top;
-        else if (L.verticalAlignment === 'Bottom') y = pad.top + innerH - c.h;
-        else y = pad.top + (innerH - c.h) / 2;
-        positions[c.id] = { x: Math.round(pad.left + cursor), y: Math.round(y) };
-        cursor += c.w + L.padding;
+        else if (L.verticalAlignment === 'Bottom') y = pad.top + innerH - cpx.h;
+        else y = pad.top + (innerH - cpx.h) / 2;
+        cursor += cpx.w + L.padding;
       }
+      positions[c.id] = { x: Math.round(x), y: Math.round(y) };
     }
   } else if (parent.layout.type === 'UIGridLayout') {
     const G = parent.layout;
     const cols = Math.max(1, Math.floor((innerW + G.cellPaddingX) / (G.cellSizeX + G.cellPaddingX)));
     parent.children.forEach((c, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
+      const col = i % cols, row = Math.floor(i / cols);
       positions[c.id] = {
         x: Math.round(pad.left + col * (G.cellSizeX + G.cellPaddingX)),
         y: Math.round(pad.top + row * (G.cellSizeY + G.cellPaddingY)),
@@ -120,26 +138,6 @@ function computeChildPositions(parent) {
     });
   }
   return positions;
-}
-
-function getRenderedPosition(node) {
-  const parent = findParent(node);
-  if (!parent || !parent.layout) return { x: node.x, y: node.y };
-  return computeChildPositions(parent)[node.id] || { x: node.x, y: node.y };
-}
-
-// ============ PATHS (para props anidadas) ============
-function getByPath(obj, path) {
-  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
-}
-function setByPath(obj, path, val) {
-  const keys = path.split('.');
-  let t = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (t[keys[i]] == null) t[keys[i]] = {};
-    t = t[keys[i]];
-  }
-  t[keys[keys.length - 1]] = val;
 }
 
 // ============ ADD ============
@@ -162,19 +160,31 @@ document.querySelectorAll('#palette button').forEach(b =>
 // ============ RENDER ============
 function render() {
   canvas.innerHTML = '';
-  for (const c of root.children) canvas.appendChild(renderNode(c, { x: c.x, y: c.y }));
+  const canvasW = canvas.clientWidth || 360;
+  const canvasH = canvas.clientHeight || 480;
+  for (const c of root.children)
+    canvas.appendChild(renderNode(c, { w: canvasW, h: canvasH }, null, null));
 }
-
-function renderNode(node, pos) {
+function renderNode(node, parentPx, forcedPos, parentLayout) {
+  // #1: si el padre tiene UIGridLayout, el hijo se renderiza a CellSize
+  const px = parentLayout?.type === 'UIGridLayout' ?
+    { w: parentLayout.cellSizeX, h: parentLayout.cellSizeY } :
+    getPixelSize(node, parentPx.w, parentPx.h);
+  
+  const pos = forcedPos || getPixelPosition(node, parentPx.w, parentPx.h);
+  
   const el = document.createElement('div');
   el.className = 'node' + (node.id === selectedId ? ' selected' : '');
   if (node.layout) el.classList.add('has-layout');
   el.dataset.id = node.id;
-  applyStyles(el, node, pos);
-
-  const childPositions = computeChildPositions(node);
-  for (const c of node.children) el.appendChild(renderNode(c, childPositions[c.id]));
-
+  
+  applyStyles(el, node, pos, px);
+  
+  const childPositions = computeChildPositions(node, px);
+  for (const c of node.children) {
+    el.appendChild(renderNode(c, px, childPositions[c.id] || null, node.layout));
+  }
+  
   if (node.id === selectedId) {
     for (const dir of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
       const h = document.createElement('div');
@@ -186,26 +196,50 @@ function renderNode(node, pos) {
   return el;
 }
 
-function applyStyles(el, node, pos) {
-  pos = pos || getRenderedPosition(node);
+function getThumbUrl(imageStr) {
+  const s = String(imageStr || '').trim();
+  if (!s) return '';
+
+  // URL ya resuelta
+  if (/^https?:\/\//.test(s)) return s;
+
+  // rbxasset:// es interno de Roblox, no accesible desde el navegador
+  if (s.startsWith('rbxasset://')) return '';
+
+  // rbxassetid://123 o simplemente 123
+  const match = s.match(/(\d+)/);
+  if (!match) return '';
+  const id = match[1];
+
+  return `https://www.roblox.com/asset-thumbnail/image?assetId=${id}&width=150&height=150&format=png`;
+}
+
+function applyStyles(el, node, pos, px) {
   el.style.left = pos.x + 'px';
   el.style.top = pos.y + 'px';
-  el.style.width = node.w + 'px';
-  el.style.height = node.h + 'px';
+  el.style.width = px.w + 'px';
+  el.style.height = px.h + 'px';
   el.style.background = hexToRgba(node.bg, 1 - (node.bgTransparency || 0));
   el.style.color = node.textColor;
   el.style.fontSize = (node.fontSize || 16) + 'px';
   el.style.borderRadius = (node.cornerRadius || 0) + 'px';
   el.style.zIndex = node.id === selectedId ? 999 : (node.zIndex || 1);
-
+  
+  // #2: BorderSizePixel visible
+  if (node.borderSizePixel > 0) {
+    el.style.border = `${node.borderSizePixel}px solid #000000`;
+  } else {
+    el.style.border = 'none';
+  }
+  
   if (node.visible === false) el.classList.add('node-hidden');
   else el.classList.remove('node-hidden');
-
-  const alignX = { Left: 'flex-start', Center: 'center', Right: 'flex-end' }[node.textXAlignment] || 'center';
-  const alignY = { Top: 'flex-start', Center: 'center', Bottom: 'flex-end' }[node.textYAlignment] || 'center';
+  
+  const alignX = { Left: 'flex-start', Center: 'center', Right: 'flex-end' } [node.textXAlignment] || 'center';
+  const alignY = { Top: 'flex-start', Center: 'center', Bottom: 'flex-end' } [node.textYAlignment] || 'center';
   el.style.justifyContent = alignX;
   el.style.alignItems = alignY;
-
+  
   let textEl = el.querySelector(':scope > .node-text');
   if (!textEl) {
     textEl = document.createElement('span');
@@ -221,6 +255,22 @@ function applyStyles(el, node, pos) {
     textEl.style.whiteSpace = node.textWrapped ? 'normal' : 'nowrap';
     textEl.style.textOverflow = node.textWrapped ? 'clip' : 'ellipsis';
   } else textEl.style.display = 'none';
+  
+  // #3: ImageLabel con preview real
+  if (node.type === 'ImageLabel' && node.image) {
+    const img = document.createElement('img');
+    img.className = 'node-img';
+    img.alt = '';
+    const url = getThumbUrl(node.image);
+    if (url) {
+      img.src = url;
+      img.style.opacity = 1 - (node.imageTransparency || 0);
+      img.onerror = () => { img.style.display = 'none'; };
+    } else {
+      img.style.display = 'none';
+    }
+    el.prepend(img); // img queda antes que el texto → se dibuja detrás
+  }
 }
 
 function hexToRgba(hex, alpha) {
@@ -228,16 +278,16 @@ function hexToRgba(hex, alpha) {
   return `rgba(${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)},${alpha})`;
 }
 
-// ============ RESIZE ============
+// ============ RESIZE (funciona en píxeles → convierte a modo) ============
 function startResize(e, handle) {
   const el = handle.closest('.node');
   const node = findNode(+el.dataset.id);
+  const parentPx = getParentPixelDims(node);
   resize = {
-    node,
+    node, parentPx, dir: handle.dataset.dir,
     startX: e.clientX, startY: e.clientY,
     origX: node.x, origY: node.y,
     origW: node.w, origH: node.h,
-    dir: handle.dataset.dir,
   };
   canvas.setPointerCapture(e.pointerId);
   e.stopPropagation();
@@ -246,26 +296,27 @@ function startResize(e, handle) {
 function doResize(e) {
   const dx = e.clientX - resize.startX;
   const dy = e.clientY - resize.startY;
-  const { dir } = resize;
-  let x = resize.origX, y = resize.origY;
-  let w = resize.origW, h = resize.origH;
+  const { dir, node, parentPx } = resize;
 
-  if (dir.includes('e')) w = Math.max(MIN_SIZE, resize.origW + dx);
-  if (dir.includes('s')) h = Math.max(MIN_SIZE, resize.origH + dy);
-  if (dir.includes('w')) {
-    const nw = Math.max(MIN_SIZE, resize.origW - dx);
-    x = resize.origX + (resize.origW - nw); w = nw;
-  }
-  if (dir.includes('n')) {
-    const nh = Math.max(MIN_SIZE, resize.origH - dy);
-    y = resize.origY + (resize.origH - nh); h = nh;
-  }
+  // Valores originales llevados a píxeles
+  const pxX  = node.positionMode === 'Scale' ? resize.origX * parentPx.w : resize.origX;
+  const pxY  = node.positionMode === 'Scale' ? resize.origY * parentPx.h : resize.origY;
+  const pxW0 = node.sizeMode === 'Scale'     ? resize.origW * parentPx.w : resize.origW;
+  const pxH0 = node.sizeMode === 'Scale'     ? resize.origH * parentPx.h : resize.origH;
 
-  resize.node.x = Math.round(x);
-  resize.node.y = Math.round(y);
-  resize.node.w = Math.round(w);
-  resize.node.h = Math.round(h);
-  render(); // re-render completo: respeta layouts del padre y de los hijos
+  let pxW = pxW0, pxH = pxH0, nx = pxX, ny = pxY;
+  if (dir.includes('e')) pxW = Math.max(MIN_SIZE, pxW0 + dx);
+  if (dir.includes('s')) pxH = Math.max(MIN_SIZE, pxH0 + dy);
+  if (dir.includes('w')) { const nw = Math.max(MIN_SIZE, pxW0 - dx); nx = pxX + (pxW0 - nw); pxW = nw; }
+  if (dir.includes('n')) { const nh = Math.max(MIN_SIZE, pxH0 - dy); ny = pxY + (pxH0 - nh); pxH = nh; }
+
+  // Convertir de vuelta al modo de cada eje
+  node.x = node.positionMode === 'Scale' ? +(nx / parentPx.w).toFixed(3) : Math.round(nx);
+  node.y = node.positionMode === 'Scale' ? +(ny / parentPx.h).toFixed(3) : Math.round(ny);
+  node.w = node.sizeMode === 'Scale'     ? +(pxW / parentPx.w).toFixed(3) : Math.round(pxW);
+  node.h = node.sizeMode === 'Scale'     ? +(pxH / parentPx.h).toFixed(3) : Math.round(pxH);
+
+  render();
 }
 
 // ============ DRAG / DROP ============
@@ -278,13 +329,13 @@ canvas.addEventListener('pointerdown', (e) => {
 
   const node = findNode(+el.dataset.id);
   selectedId = node.id;
-  const rendered = getRenderedPosition(node);
   const parent = findParent(node);
+  const parentPx = getParentPixelDims(node);
 
   drag = {
-    node, el,
+    node, el, parentPx,
     startX: e.clientX, startY: e.clientY,
-    origX: rendered.x, origY: rendered.y,
+    origX: node.x, origY: node.y,
     parentHasLayout: !!(parent && parent.layout),
     moved: false,
   };
@@ -300,11 +351,19 @@ canvas.addEventListener('pointermove', (e) => {
   if (!drag) return;
   const dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
   if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-  const newX = Math.round(drag.origX + dx);
-  const newY = Math.round(drag.origY + dy);
-  drag.el.style.left = newX + 'px';
-  drag.el.style.top = newY + 'px';
-  if (!drag.parentHasLayout) { drag.node.x = newX; drag.node.y = newY; }
+
+  if (!drag.parentHasLayout) {
+    if (drag.node.positionMode === 'Scale') {
+      drag.node.x = +(drag.origX + dx / drag.parentPx.w).toFixed(3);
+      drag.node.y = +(drag.origY + dy / drag.parentPx.h).toFixed(3);
+    } else {
+      drag.node.x = Math.round(drag.origX + dx);
+      drag.node.y = Math.round(drag.origY + dy);
+    }
+    const px = getPixelPosition(drag.node, drag.parentPx.w, drag.parentPx.h);
+    drag.el.style.left = px.x + 'px';
+    drag.el.style.top = px.y + 'px';
+  }
   if (drag.moved) updateDropTarget(e.clientX, e.clientY);
 });
 
@@ -350,30 +409,48 @@ function updateDropTarget(x, y) {
   clearDropTarget();
   currentDropTarget = target;
   const parent = findParent(drag.node);
-  if (target && target !== root && target !== parent) {
+  if (target && target !== root && target !== parent)
     canvas.querySelector(`.node[data-id="${target.id}"]`)?.classList.add('drop-target');
-  }
 }
 function clearDropTarget() {
-  if (currentDropTarget && currentDropTarget !== root) {
+  if (currentDropTarget && currentDropTarget !== root)
     canvas.querySelector(`.node[data-id="${currentDropTarget.id}"]`)?.classList.remove('drop-target');
-  }
   currentDropTarget = null;
 }
+
 function reparent(node, newParent) {
   const oldParent = findParent(node);
   if (!oldParent || oldParent === newParent) return;
   if (oldParent.layout || newParent.layout) {
-    // En layouts la posición no importa; solo movemos en el árbol
     oldParent.children = oldParent.children.filter(c => c !== node);
     newParent.children.push(node);
     return;
   }
-  const abs = getAbsolutePosition(node);
-  const npAbs = getAbsolutePosition(newParent);
+
+  // Preservar posición visual usando rects reales del DOM
+  const nodeEl = canvas.querySelector(`.node[data-id="${node.id}"]`);
+  if (nodeEl) {
+    const canvasRect = canvas.getBoundingClientRect();
+    const nRect = nodeEl.getBoundingClientRect();
+    const absX = nRect.left - canvasRect.left + canvas.scrollLeft;
+    const absY = nRect.top - canvasRect.top + canvas.scrollTop;
+
+    let pAbsX = 0, pAbsY = 0, pW = canvas.clientWidth || 1, pH = canvas.clientHeight || 1;
+    if (newParent !== root) {
+      const pEl = canvas.querySelector(`.node[data-id="${newParent.id}"]`);
+      if (pEl) {
+        const r = pEl.getBoundingClientRect();
+        pAbsX = r.left - canvasRect.left + canvas.scrollLeft;
+        pAbsY = r.top - canvasRect.top + canvas.scrollTop;
+        pW = pEl.offsetWidth || 1;
+        pH = pEl.offsetHeight || 1;
+      }
+    }
+    const relX = absX - pAbsX, relY = absY - pAbsY;
+    node.x = node.positionMode === 'Scale' ? +(relX / pW).toFixed(3) : Math.round(relX);
+    node.y = node.positionMode === 'Scale' ? +(relY / pH).toFixed(3) : Math.round(relY);
+  }
   oldParent.children = oldParent.children.filter(c => c !== node);
-  node.x = Math.round(abs.x - npAbs.x);
-  node.y = Math.round(abs.y - npAbs.y);
   newParent.children.push(node);
 }
 
@@ -383,9 +460,7 @@ const propsContent = document.getElementById('props-content');
 const hierarchyEl  = document.getElementById('hierarchy');
 
 document.getElementById('close-props').addEventListener('click', () => {
-  selectedId = null;
-  propsPanel.classList.add('hidden');
-  render();
+  selectedId = null; propsPanel.classList.add('hidden'); render();
 });
 
 function readValue(input) {
@@ -419,31 +494,45 @@ function renderField(node, f) {
     return `<label class="field"><span>${label}</span>
       <input type="color" data-prop="${f.prop}" value="${val || '#000000'}" /></label>`;
   }
-  return `<label class="field"><span>${label}</span>
-    <input type="${f.type || 'text'}" data-prop="${f.prop}" value="${val ?? ''}" /></label>`;
+  const hint = f.pxHint != null
+    ? ` <small class="px-hint">= ${Math.round(f.pxHint)}px</small>` : '';
+  return `<label class="field"><span>${label}${hint}</span>
+    <input type="${f.type || 'text'}" step="${f.step || 'any'}"
+           data-prop="${f.prop}" value="${val ?? ''}" /></label>`;
 }
 
 function buildSections(node) {
   const sections = [];
+  const parentPx = getParentPixelDims(node);
 
   sections.push({ title: 'General', fields: [
     { prop: 'name', type: 'text', label: 'Nombre' },
     { prop: 'visible', type: 'checkbox', label: 'Visible' },
-    { prop: 'zIndex', type: 'number', label: 'ZIndex' },
+    { prop: 'zIndex', type: 'number', label: 'ZIndex', step: 1 },
   ]});
 
-  sections.push({ title: 'Layout', fields: [
-    { prop: 'x', type: 'number', label: 'X' },
-    { prop: 'y', type: 'number', label: 'Y' },
-    { prop: 'w', type: 'number', label: 'Ancho' },
-    { prop: 'h', type: 'number', label: 'Alto' },
-    { prop: 'cornerRadius', type: 'number', label: 'Radio' },
-  ]});
+  // === Layout con modos Offset/Scale ===
+  const posStep = node.positionMode === 'Scale' ? 0.01 : 1;
+  const sizeStep = node.sizeMode === 'Scale' ? 0.01 : 1;
+  const fields = [
+    { prop: 'positionMode', type: 'select', label: 'Position Mode', options: ['Offset', 'Scale'] },
+    { prop: 'x', type: 'number', label: 'X', step: posStep,
+      pxHint: node.positionMode === 'Scale' ? node.x * parentPx.w : null },
+    { prop: 'y', type: 'number', label: 'Y', step: posStep,
+      pxHint: node.positionMode === 'Scale' ? node.y * parentPx.h : null },
+    { prop: 'sizeMode', type: 'select', label: 'Size Mode', options: ['Offset', 'Scale'] },
+    { prop: 'w', type: 'number', label: 'Ancho', step: sizeStep,
+      pxHint: node.sizeMode === 'Scale' ? node.w * parentPx.w : null },
+    { prop: 'h', type: 'number', label: 'Alto', step: sizeStep,
+      pxHint: node.sizeMode === 'Scale' ? node.h * parentPx.h : null },
+    { prop: 'cornerRadius', type: 'number', label: 'Radio', step: 1 },
+  ];
+  sections.push({ title: 'Layout', fields });
 
   sections.push({ title: 'Apariencia', fields: [
     { prop: 'bg', type: 'color', label: 'Fondo' },
     { prop: 'bgTransparency', type: 'range', label: 'Transp. fondo', min: 0, max: 1, step: 0.05 },
-    { prop: 'borderSizePixel', type: 'number', label: 'BorderSizePixel' },
+    { prop: 'borderSizePixel', type: 'number', label: 'BorderSizePixel', step: 1 },
   ]});
 
   if (hasText(node)) {
@@ -451,7 +540,7 @@ function buildSections(node) {
       { prop: 'text', type: 'text', label: 'Texto' },
       { prop: 'textColor', type: 'color', label: 'Color' },
       { prop: 'textTransparency', type: 'range', label: 'Transp.', min: 0, max: 1, step: 0.05 },
-      { prop: 'fontSize', type: 'number', label: 'Tamaño' },
+      { prop: 'fontSize', type: 'number', label: 'Tamaño', step: 1 },
       { prop: 'textScaled', type: 'checkbox', label: 'TextScaled' },
       { prop: 'textWrapped', type: 'checkbox', label: 'TextWrapped' },
       { prop: 'textXAlignment', type: 'select', label: 'Align X', options: ['Left', 'Center', 'Right'] },
@@ -459,44 +548,39 @@ function buildSections(node) {
     ]});
   }
 
-  // === LAYOUT / PADDING (solo Frames) ===
   if (node.type === 'Frame') {
     const layoutType = node.layout?.type || 'None';
-    const fields = [
-      { prop: '_layoutType', type: 'select', label: 'Layout', options: ['None', 'UIListLayout', 'UIGridLayout'] },
-    ];
+    const lf = [{ prop: '_layoutType', type: 'select', label: 'Layout', options: ['None', 'UIListLayout', 'UIGridLayout'] }];
     if (layoutType === 'UIListLayout') {
-      fields.push(
+      lf.push(
         { prop: 'layout.fillDirection', type: 'select', label: 'Direction', options: ['Vertical', 'Horizontal'] },
-        { prop: 'layout.padding', type: 'number', label: 'Padding' },
+        { prop: 'layout.padding', type: 'number', label: 'Padding', step: 1 },
         { prop: 'layout.horizontalAlignment', type: 'select', label: 'Align X', options: ['Left', 'Center', 'Right'] },
         { prop: 'layout.verticalAlignment', type: 'select', label: 'Align Y', options: ['Top', 'Center', 'Bottom'] },
       );
     } else if (layoutType === 'UIGridLayout') {
-      fields.push(
-        { prop: 'layout.cellSizeX', type: 'number', label: 'Cell W' },
-        { prop: 'layout.cellSizeY', type: 'number', label: 'Cell H' },
-        { prop: 'layout.cellPaddingX', type: 'number', label: 'Gap X' },
-        { prop: 'layout.cellPaddingY', type: 'number', label: 'Gap Y' },
+      lf.push(
+        { prop: 'layout.cellSizeX', type: 'number', label: 'Cell W', step: 1 },
+        { prop: 'layout.cellSizeY', type: 'number', label: 'Cell H', step: 1 },
+        { prop: 'layout.cellPaddingX', type: 'number', label: 'Gap X', step: 1 },
+        { prop: 'layout.cellPaddingY', type: 'number', label: 'Gap Y', step: 1 },
       );
     }
-    sections.push({ title: 'Layout automático', fields });
+    sections.push({ title: 'Layout automático', fields: lf });
 
     sections.push({ title: 'UIPadding', fields: [
-      { prop: 'padding.top', type: 'number', label: 'Top' },
-      { prop: 'padding.right', type: 'number', label: 'Right' },
-      { prop: 'padding.bottom', type: 'number', label: 'Bottom' },
-      { prop: 'padding.left', type: 'number', label: 'Left' },
+      { prop: 'padding.top', type: 'number', label: 'Top', step: 1 },
+      { prop: 'padding.right', type: 'number', label: 'Right', step: 1 },
+      { prop: 'padding.bottom', type: 'number', label: 'Bottom', step: 1 },
+      { prop: 'padding.left', type: 'number', label: 'Left', step: 1 },
     ]});
   }
 
   if (node.type === 'Frame' || node.type === 'TextButton') {
-    const fields = [];
-    fields.push({ prop: 'active', type: 'checkbox', label: 'Active' });
-    if (node.type === 'TextButton')
-      fields.push({ prop: 'autoButtonColor', type: 'checkbox', label: 'AutoButtonColor' });
-    fields.push({ prop: 'draggable', type: 'checkbox', label: 'Draggable' });
-    sections.push({ title: 'Interacción', fields });
+    const f = [{ prop: 'active', type: 'checkbox', label: 'Active' }];
+    if (node.type === 'TextButton') f.push({ prop: 'autoButtonColor', type: 'checkbox', label: 'AutoButtonColor' });
+    f.push({ prop: 'draggable', type: 'checkbox', label: 'Draggable' });
+    sections.push({ title: 'Interacción', fields: f });
   } else {
     sections.push({ title: 'Interacción', fields: [
       { prop: 'draggable', type: 'checkbox', label: 'Draggable' },
@@ -542,7 +626,6 @@ function updateProps() {
       const prop = e.target.dataset.prop;
       const val = readValue(e.target);
 
-      // Selector de tipo de layout
       if (prop === '_layoutType') {
         if (val === 'None') node.layout = null;
         else if (val === 'UIListLayout') {
@@ -556,9 +639,32 @@ function updateProps() {
             cellPaddingX: 8, cellPaddingY: 8, fillDirection: 'Horizontal',
           };
         }
-        render();
-        updateProps();
-        return;
+        render(); updateProps(); return;
+      }
+
+      // === Cambio de modo → convertir valores existentes ===
+      if (prop === 'positionMode' || prop === 'sizeMode') {
+        const pd = getParentPixelDims(node);
+        if (prop === 'positionMode') {
+          if (val === 'Scale') {
+            node.x = +(node.x / pd.w).toFixed(3);
+            node.y = +(node.y / pd.h).toFixed(3);
+          } else {
+            node.x = Math.round(node.x * pd.w);
+            node.y = Math.round(node.y * pd.h);
+          }
+          node.positionMode = val;
+        } else {
+          if (val === 'Scale') {
+            node.w = +(node.w / pd.w).toFixed(3);
+            node.h = +(node.h / pd.h).toFixed(3);
+          } else {
+            node.w = Math.round(node.w * pd.w);
+            node.h = Math.round(node.h * pd.h);
+          }
+          node.sizeMode = val;
+        }
+        render(); updateProps(); return;
       }
 
       setByPath(node, prop, val);
@@ -596,7 +702,9 @@ function renderHierarchy() {
     btn.className = 'hier-item' + (node.id === selectedId ? ' active' : '');
     btn.style.paddingLeft = (10 + depth * 14) + 'px';
     const layoutTag = node.layout ? ` <span style="opacity:.7">${LAYOUT_TAG[node.layout.type] || ''}</span>` : '';
-    btn.innerHTML = `${ICON[node.type] || '•'} ${node.name}${layoutTag}`;
+    const scaleTag = (node.positionMode === 'Scale' || node.sizeMode === 'Scale')
+      ? ' <span class="scale-tag">S</span>' : '';
+    btn.innerHTML = `${ICON[node.type] || '•'} ${node.name}${layoutTag}${scaleTag}`;
     if (node.visible === false) btn.classList.add('hidden-node');
     btn.addEventListener('click', () => {
       selectedId = node.id; render(); updateProps();
@@ -635,11 +743,8 @@ function generateLuau() {
 
     L.push(`${ind}local ${v} = Instance.new("${node.type}")`);
     L.push(`${ind}${v}.Name = "${esc(node.name)}"`);
-
-    if (inLayout) L.push(`${ind}${v}.Position = UDim2.fromOffset(0, 0)`);
-    else          L.push(`${ind}${v}.Position = UDim2.fromOffset(${node.x}, ${node.y})`);
-
-    L.push(`${ind}${v}.Size = UDim2.fromOffset(${node.w}, ${node.h})`);
+    L.push(`${ind}${v}.Position = ${inLayout ? 'UDim2.fromOffset(0, 0)' : udim2Pos(node)}`);
+    L.push(`${ind}${v}.Size = ${udim2Size(node)}`);
     L.push(`${ind}${v}.BackgroundColor3 = ${color3(node.bg)}`);
     if (node.bgTransparency) L.push(`${ind}${v}.BackgroundTransparency = ${node.bgTransparency}`);
     if (node.visible === false) L.push(`${ind}${v}.Visible = false`);
@@ -672,7 +777,6 @@ function generateLuau() {
       L.push(`${ind}corner_${v}.Parent = ${v}`);
     }
 
-    // Layout automático
     if (node.layout?.type === 'UIListLayout') {
       L.push(`${ind}local listLayout_${v} = Instance.new("UIListLayout")`);
       L.push(`${ind}listLayout_${v}.FillDirection = Enum.FillDirection.${node.layout.fillDirection}`);
@@ -689,7 +793,6 @@ function generateLuau() {
       L.push(`${ind}gridLayout_${v}.Parent = ${v}`);
     }
 
-    // UIPadding
     const p = node.padding;
     if (p && (p.top || p.right || p.bottom || p.left)) {
       L.push(`${ind}local padding_${v} = Instance.new("UIPadding")`);
@@ -711,6 +814,14 @@ function generateLuau() {
   return L.join('\n');
 }
 
+function udim2Pos(node) {
+  if (node.positionMode === 'Scale') return `UDim2.fromScale(${+node.x.toFixed(4)}, ${+node.y.toFixed(4)})`;
+  return `UDim2.fromOffset(${Math.round(node.x)}, ${Math.round(node.y)})`;
+}
+function udim2Size(node) {
+  if (node.sizeMode === 'Scale') return `UDim2.fromScale(${+node.w.toFixed(4)}, ${+node.h.toFixed(4)})`;
+  return `UDim2.fromOffset(${Math.round(node.w)}, ${Math.round(node.h)})`;
+}
 const sanitize = s => s.replace(/[^a-zA-Z0-9_]/g, '');
 const esc = s => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 const color3 = hex => {
@@ -739,3 +850,5 @@ document.getElementById('copy-btn').addEventListener('click', async () => {
 
 // ============ INIT ============
 render();
+// Re-render cuando cambie el tamaño del canvas (para Scale mode)
+new ResizeObserver(() => render()).observe(canvas);
