@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Luau GUI Designer</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header><h1>Luau GUI Designer</h1></header>
+
+  <main>
+    <div id="canvas-wrap">
+      <div id="canvas"></div>
+    </div>
+  </main>
+
+  <div id="palette">
+    <button data-type="Frame">Frame</button>
+    <button data-type="TextLabel">Text</button>
+    <button data-type="TextButton">Button</button>
+    <button data-type="ImageLabel">Image</button>
+  </div>
+
+  <button id="export-btn">Exportar Luau</button>
+
+  <div id="properties" class="hidden">
+    <button id="close-props">×</button>
+    <div id="props-content"></div>
+  </div>
+
+  <div id="export-modal" class="hidden">
+    <pre id="export-code"></pre>
+    <button id="copy-btn">Copiar código</button>
+    <button id="close-export">Cerrar</button>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
