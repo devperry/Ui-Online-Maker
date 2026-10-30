@@ -35,7 +35,7 @@ main { flex: 1; overflow: auto; padding: 12px; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  /* sin padding: en Roblox no hay */
   text-align: center;
   overflow: visible;
   box-shadow: 0 0 0 1px rgba(255,255,255,0.06);
@@ -44,6 +44,10 @@ main { flex: 1; overflow: auto; padding: 12px; }
 .node.selected {
   outline: 2px solid #6a6aff;
   outline-offset: 2px;
+}
+.node.has-layout {
+  /* pequeño indicador visual de layout activo */
+  box-shadow: 0 0 0 1px rgba(106,106,255,0.4), inset 0 0 0 1px rgba(106,106,255,0.15);
 }
 .node.dragging { opacity: 0.7; }
 .node.dragging, .node.dragging * { pointer-events: none; }
@@ -58,7 +62,7 @@ main { flex: 1; overflow: auto; padding: 12px; }
   pointer-events: none;
   line-height: 1.2;
 }
-
+.hier-item .layout-tag { opacity: 0.6; font-size: 11px; }
 /* ===== HANDLES ===== */
 .handle {
   position: absolute;
