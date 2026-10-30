@@ -11,26 +11,14 @@ body {
   overflow: hidden;
 }
 
-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid #2a2a3a;
-}
+header { padding: 12px 16px; border-bottom: 1px solid #2a2a3a; }
 header h1 { margin: 0; font-size: 16px; font-weight: 600; }
 
-main {
-  flex: 1;
-  overflow: auto;
-  padding: 12px;
-}
-
-#canvas-wrap {
-  background: #1c1c28;
-  border-radius: 12px;
-  padding: 8px;
-}
+main { flex: 1; overflow: auto; padding: 12px; }
+#canvas-wrap { background: #1c1c28; border-radius: 12px; padding: 8px; }
 
 #canvas {
-  background: #2a2a3a;
+  background: #12121e;
   width: 100%;
   min-height: 420px;
   border-radius: 8px;
@@ -39,23 +27,60 @@ main {
   touch-action: none;
 }
 
+/* ===== NODOS ===== */
 .node {
   position: absolute;
-  border: 1px solid transparent;
   user-select: none;
   cursor: move;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  padding: 2px;
   text-align: center;
-  overflow: hidden;
+  overflow: visible;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.06);
+  pointer-events: auto;
 }
 .node.selected {
   outline: 2px solid #6a6aff;
   outline-offset: 2px;
 }
+.node.dragging { opacity: 0.7; }
+.node.dragging, .node.dragging * { pointer-events: none; }
+.node.drop-target { outline: 2px dashed #ffaa00; outline-offset: 2px; }
+.node.node-hidden { opacity: 0.25; }
 
+.node-text {
+  overflow: hidden;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 2px 4px;
+  pointer-events: none;
+  line-height: 1.2;
+}
+
+/* ===== HANDLES ===== */
+.handle {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  background: #6a6aff;
+  border: 2px solid white;
+  border-radius: 50%;
+  z-index: 20;
+  touch-action: none;
+  pointer-events: auto;
+}
+.handle-nw { left: -12px; top: -12px; cursor: nwse-resize; }
+.handle-n  { left: calc(50% - 12px); top: -12px; cursor: ns-resize; }
+.handle-ne { right: -12px; top: -12px; cursor: nesw-resize; }
+.handle-e  { right: -12px; top: calc(50% - 12px); cursor: ew-resize; }
+.handle-se { right: -12px; bottom: -12px; cursor: nwse-resize; }
+.handle-s  { left: calc(50% - 12px); bottom: -12px; cursor: ns-resize; }
+.handle-sw { left: -12px; bottom: -12px; cursor: nesw-resize; }
+.handle-w  { left: -12px; top: calc(50% - 12px); cursor: ew-resize; }
+
+/* ===== PALETA ===== */
 #palette {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -87,55 +112,129 @@ main {
   font-size: 15px;
 }
 
+/* ===== PROPS PANEL ===== */
 #properties {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   background: #1c1c28;
   border-top: 1px solid #2a2a3a;
   border-radius: 16px 16px 0 0;
-  max-height: 60vh;
+  max-height: 65vh;
   overflow: auto;
   padding: 16px;
   z-index: 100;
 }
 #properties.hidden { display: none; }
-#properties label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
-  font-size: 14px;
-  gap: 12px;
-}
-#properties input {
-  background: #2a2a3a;
-  border: 1px solid #3a3a4a;
-  color: #e6e6f0;
-  padding: 8px 10px;
-  border-radius: 6px;
-  font-size: 14px;
-  width: 140px;
-  min-height: 36px;
-}
-#properties input[type="color"] {
-  padding: 2px;
-  width: 60px;
-}
 #close-props {
-  position: absolute;
-  top: 8px; right: 8px;
+  position: sticky;
+  top: 0;
+  margin-left: auto;
+  display: block;
   width: 36px; height: 36px;
   background: #2a2a3a;
   border: none;
   border-radius: 50%;
   color: white;
   font-size: 20px;
+  z-index: 2;
 }
 
+/* Jerarquía */
+#hierarchy {
+  max-height: 160px;
+  overflow-y: auto;
+  border-bottom: 1px solid #2a2a3a;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+}
+.hier-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: #c0c0d0;
+  padding: 8px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 36px;
+}
+.hier-item:hover { background: #2a2a3a; }
+.hier-item.active { background: #6a6aff; color: white; }
+.hier-item.hidden-node { opacity: 0.5; font-style: italic; }
+
+/* Secciones */
+details { margin-bottom: 8px; border-radius: 8px; }
+details summary {
+  padding: 10px 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  color: #6a6aff;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  user-select: none;
+}
+details[open] summary {
+  border-bottom: 1px solid #2a2a3a;
+  margin-bottom: 6px;
+}
+
+.field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+  gap: 8px;
+}
+.field > span { flex: 1; color: #a0a0b0; }
+.field > span small { color: #6a6aff; font-weight: 600; }
+.field > input,
+.field > select {
+  flex: 1;
+  max-width: 150px;
+  background: #2a2a3a;
+  border: 1px solid #3a3a4a;
+  color: #e6e6f0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 36px;
+}
+.field > input[type="color"] { max-width: 60px; padding: 2px; }
+.field > input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  accent-color: #6a6aff;
+}
+.field > input[type="range"] {
+  padding: 0;
+  accent-color: #6a6aff;
+  background: transparent;
+  border: none;
+}
+
+.props-actions { display: flex; gap: 8px; margin-top: 12px; }
+.props-actions button {
+  flex: 1;
+  padding: 12px;
+  min-height: 44px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  background: #2a2a3a;
+  color: white;
+}
+#delete-btn { background: #8a2a2a; }
+
+/* ===== EXPORT MODAL ===== */
 #export-modal {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.9);
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.92);
   padding: 16px;
   z-index: 200;
   display: flex;
@@ -156,12 +255,9 @@ main {
   white-space: pre;
 }
 #copy-btn, #close-export {
-  padding: 14px;
-  min-height: 48px;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 15px;
+  padding: 14px; min-height: 48px;
+  border: none; border-radius: 8px;
+  font-weight: 600; font-size: 15px;
 }
 #copy-btn { background: #2a8a4a; color: white; }
 #close-export { background: #2a2a3a; color: white; }
